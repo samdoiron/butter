@@ -1,0 +1,13 @@
+[package]
+name = "butter"
+version = "0.1.0"
+authors = ["SamDoiron <sam.doiron96@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+smol = "0.4.3"
+futures-lite = "1.0.0"
+async-channel = "1.4.1"
+easy-parallel = "3.1.0"
+once_cell = "1.4.1"
+async-io = "0.2.7"
