@@ -2,108 +2,61 @@
 
 use git2::{
     Repository,
-    Oid
+    Oid, DiffOptions, TreeWalkMode, TreeWalkResult, ObjectType
 };
-use crossbeam_channel::bounded;
-use std::{thread};
 
 use anyhow::{Context, Result};
 
 use log::{debug, info, trace, warn};
-
-#[derive(Debug)]
-struct DeltaJob {
-    old_tree_oid: Oid,
-    new_tree_oid: Oid
-}
-
-impl DeltaJob {
-    fn run(&self) -> Result<DeltaJobOutput> {
-        let repo = Repository::open(".").context("opening repository (from work thread)")?;
-        let old_tree = repo.find_tree(self.old_tree_oid)?;
-        let new_tree = repo.find_tree(self.new_tree_oid)?;
-        let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)?;
-
-        let mut file_change_count = 0;
-        diff.foreach(&mut |_file, _| {
-            file_change_count += 1;
-            true
-        }, None, None, None)?;
-
-        Ok(DeltaJobOutput { file_change_count })
-    }
-}
-
-#[derive(Default, Debug)]
-struct DeltaJobOutput {
-    file_change_count: u32
-}
-
-impl DeltaJobOutput {
-    fn reduce(&self, other: &Self) -> Self {
-        DeltaJobOutput {
-            file_change_count: self.file_change_count + other.file_change_count
-        }
-    }
-}
 
 fn main() -> Result<()> {
     pretty_env_logger::try_init()?;
 
     let repo = Repository::open(".").context("open repository")?;
 
-    let (work_tx, work_rx) = bounded::<DeltaJob>(256);
-    let (result_tx, result_rx) = bounded::<Result<DeltaJobOutput>>(256);
+    let mut total_deltas = 0usize;
+    let mut total_commits_searched = 0usize;
 
-    let mut work_threads = Vec::new();
+    let mut last_commit = repo.head()?.peel_to_commit()?;
+    let mut last_tree = last_commit.tree()?;
 
-    // TODO: num CPUs
-    info!("spawning 16 threads");
-    for _ in 0..16 {
-        let work_rx = work_rx.clone();
-        let result_tx = result_tx.clone();
-        work_threads.push(thread::spawn(move || {
-            for job in work_rx {
-                result_tx.send(job.run()).expect("sending result");
-            }
-        }));
-    }
+    let mut diff_opts = DiffOptions::new();
 
-    let (final_tx, final_rx) = bounded::<DeltaJobOutput>(1);
+    last_tree.walk(TreeWalkMode::PreOrder, |path, entry| {
+        if let (Some(ObjectType::Blob), Some(name)) = (entry.kind(), entry.name()) {
+            let mut full_path = String::with_capacity(path.len() + name.len());
+            full_path.push_str(path);
+            full_path.push_str(name);
 
-    info!("spawning reduce thread");
-    let reduce_thread = thread::spawn(move || {
-        let mut final_result: DeltaJobOutput = Default::default();
-        for result in result_rx {
-            println!("current reduction: {:?}", final_result);
-            match result {
-                Ok(output) => {
-                    final_result = final_result.reduce(&output)
-                },
-                Err(err) => warn!("got error result: {}", err)
-            }
+            trace!("watching path: ./{}", full_path);
+            diff_opts.pathspec(full_path);
         }
-        final_tx.send(final_result).expect("send final result");
-    });
+        TreeWalkResult::Ok
+    })?;
 
-    let mut prev_commit = repo.find_commit(repo.head()?.target().expect("missing head!"))?;
-    while let Some(commit) = prev_commit.parents().next() {
-        trace!("sending job: diff {} to {}", prev_commit.tree_id(), commit.tree_id());
-        work_tx.send(DeltaJob{
-            old_tree_oid: prev_commit.tree_id(),
-            new_tree_oid: commit.tree_id()
-        }).context("sending job to workers")?;
-        prev_commit = commit;
+    while let Some(commit) = last_commit.parents().next() {
+        let tree = commit.tree()?;
+        total_commits_searched += 1;
+
+        debug!("starting comparison {:?} to {:?}", last_commit.id(), commit.id());
+        let diff = repo.diff_tree_to_tree(
+            Some(&last_tree),
+            Some(&tree),
+            Some(&mut diff_opts)
+        )?;
+        debug!("finished diffing");
+        debug!("calculating stats");
+        let delta = diff.stats()?.files_changed();
+        debug!("stat calculation finished");
+        total_deltas += delta;
+        
+        if delta > 0 {
+            println!("changes: {} / {}", total_deltas, total_commits_searched);
+        }
+
+        last_commit = commit;
+        last_tree = tree;
     }
-
-    for handle in work_threads {
-        handle.join().expect("join work thread");
-    }
-    reduce_thread.join().expect("join reduce thread");
-
-    dbg!(final_rx.recv()?);
 
     Ok(())
 }
-
-// 3.85
