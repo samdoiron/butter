@@ -1,3 +1,4 @@
+
 [package]
 name = "butter"
 version = "0.1.0"
@@ -7,6 +8,14 @@ edition = "2018"
 [dependencies]
 git2 = "0.13"
 anyhow = "1.0.32"
-crossbeam-channel = "0.4.4"
 pretty_env_logger = "0.4.0"
 log = "0.4.11"
+take_mut = "0.2.2"
+num_cpus = "1.13.0"
+chrono = "0.4.15"
+clap = "3.0.0-beta.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+debug = true
