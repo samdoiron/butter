@@ -22,7 +22,7 @@ OPTIONS:
 ### Installation
 
 1. Install Rust / Cargo (nightly). I recommend https://rustup.rs
-2. `cargo install --bin https://github.com/samdoiron/butter.git`
+2. `cargo install --git https://github.com/samdoiron/butter.git`
 
 ### Why is it fast?
 
