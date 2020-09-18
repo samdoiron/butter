@@ -6,7 +6,6 @@ use anyhow::{bail, Context, Result};
 
 use chrono::{Duration, Local};
 use clap::Clap;
-use log::{info, warn};
 use std::collections::BTreeMap;
 use std::{
     path::{Path, PathBuf}
@@ -206,48 +205,31 @@ fn main() -> Result<()> {
         None => WatchNode::from_git_tree(&repo, last_commit.tree()?)?,
     };
 
-    let commits = match cli_opts.weeks {
-        Some(weeks) => {
-            let start_time_epoch = (Local::now() - Duration::weeks(weeks)).timestamp();
-
-            let mut commits = Vec::new();
-            while let Some(commit) = last_commit.parents().next() {
-                commits.push(commit.tree_id());
-                if commit.time().seconds() < start_time_epoch {
-                    break;
-                }
-                last_commit = commit;
-            }
-            commits
+    let start_time_epoch = cli_opts.weeks.map_or(0, |weeks| (Local::now() - Duration::weeks(weeks)).timestamp());
+    let mut commits = Vec::new();
+    while let Some(commit) = last_commit.parents().next() {
+        commits.push(commit.tree_id());
+        eprint!("\x0D");
+        eprint!("Discovered {} commits", commits.len());
+        if commit.time().seconds() < start_time_epoch {
+            break;
         }
-        None => {
-            let mut commits = Vec::new();
-            while let Some(commit) = last_commit.parents().next() {
-                commits.push(commit.tree_id());
-                last_commit = commit;
-            }
-            commits
-        }
-    };
+        last_commit = commit;
+    }
+    eprintln!();
 
     let commit_count = commits.len();
-    info!("counted {} commits total", commit_count);
+    let bar = indicatif::ProgressBar::new(commit_count as u64);
+    bar.set_style(indicatif::ProgressStyle::default_bar()
+        .template("{wide_bar} {pos}/{len} [ETA {eta}]"));
 
-    let mut commits_checked = 0usize;
     for tree_id in commits {
         full_tree
             .update_for_revision(&repo, tree_id)
             .with_context(|| format!("could not process tree {}", tree_id))?;
-        commits_checked += 1;
-        if commits_checked % 1000 == 0 {
-            info!(
-                "checked {}/{} commits ({}% complete)",
-                commits_checked,
-                commit_count,
-                100 * commits_checked / commit_count
-            );
-        }
+        bar.inc(1);
     }
+    bar.finish();
 
     full_tree.walk_files(&mut |path, file_node| {
         println!("{}\t{}", file_node.change_count, path.to_string_lossy());
