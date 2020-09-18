@@ -19,6 +19,10 @@ OPTIONS:
         --weeks <weeks>            number of weeks in the past to check
 ```
 
+### Installation
+
+1. Install Rust / Cargo (nightly). I recommend https://rustup.rs
+2. `cargo install --bin https://github.com/samdoiron/butter.git`
 
 ### Why is it fast?
 
